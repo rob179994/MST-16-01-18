@@ -21,8 +21,19 @@ public:
 		int rank;
 		int index;
 		vector<int> children;
+		vector<int> connectedNodes;
+		vector<double> weightsOfConnectedNodes;
 		int xCoord;
 		int yCoord;
+
+		/*double northEdgeWeight;
+		double eastEdgeWeight;
+		double southEdgeWeight;
+		double westEdgeWeight;
+		int northNode;
+		int eastNode;
+		int southNode;
+		int westNode;*/
 
 		bool operator< (const nodeStructure &other) const {
 			return rank < other.rank;
@@ -30,7 +41,7 @@ public:
 
 	};
 
-	void Union(vector<nodeStructure> &allNodes, int rootOne, int rootTwo, int nodeOne, int nodeTwo) {
+	void Union(vector<nodeStructure> &allNodes, int rootOne, int rootTwo, int nodeOne, int nodeTwo,double edgeWeight) {
 
 		// Attach smaller rank tree under root of high 
 		// rank tree (Union by Rank)
@@ -39,7 +50,6 @@ public:
 				reverseSubTree(allNodes,nodeOne, allNodes[allNodes[nodeOne].root].rank, nodeOne, nodeOne);
 				rootOne = nodeOne;
 			}
-
 			allNodes[rootOne].root = rootTwo;
 			setRootForChildren(allNodes,rootTwo,nodeOne);
 			allNodes[nodeOne].parent = nodeTwo;
@@ -78,6 +88,11 @@ public:
 		}
 
 		setRankDueToChildren(allNodes,allNodes[nodeOne].root);
+
+		allNodes[nodeTwo].connectedNodes.push_back(nodeOne);
+		allNodes[nodeTwo].weightsOfConnectedNodes.push_back(edgeWeight);
+		allNodes[nodeOne].connectedNodes.push_back(nodeTwo);
+		allNodes[nodeOne].weightsOfConnectedNodes.push_back(edgeWeight);
 
 	}
 
@@ -164,6 +179,7 @@ public:
 			nodeMST[v].xCoord = v % xPixels;
 			nodeMST[v].yCoord = v / xPixels;
 		}
+		cout << yPixels*xPixels << " pixels"<< endl;
 
 		int i = 0;
 		int sidesPicked = 0;
@@ -177,15 +193,50 @@ public:
 			int rootTwo = nodeMST[smallestEdge.getDestinationNodeIndex()].root;
 
 			if (rootOne != rootTwo) {
-				Union(nodeMST, rootOne, rootTwo, smallestEdge.getSourceNodeIndex(), smallestEdge.getDestinationNodeIndex());
+				Union(nodeMST, rootOne, rootTwo, smallestEdge.getSourceNodeIndex(), smallestEdge.getDestinationNodeIndex(), smallestEdge.getWeight());
+				//connectEdge(smallestEdge.getSourceNodeIndex(), smallestEdge.getDestinationNodeIndex(),smallestEdge.getWeight(),sortedEdges);
 				sidesPicked++;
 			}
-
 			i++;
+
+
+
+			if (sidesPicked % 100000 == 0) {
+				cout << sidesPicked << " done" << endl;
+			}
+			else if (sidesPicked >500000) {
+				if (sidesPicked % 1000 == 0) {
+					cout << sidesPicked << " done" << endl;
+				}
+			}
+			else if (sidesPicked >400000) {
+				if (sidesPicked % 10000 == 0) {
+					cout << sidesPicked << " done" << endl;
+				}
+			}
+
+
 		}
+
+		cout << "MST DONE" << endl;
 
 		return nodeMST;
 	}
+
+	/*void connectEdge(int nodeOneIndex, int nodeTwoIndex,double edgeWeight,vector<TreeEdge> &sortedEdges) {
+		if (nodeOneIndex - nodeTwoIndex == -1) {
+
+		}
+		else if () {
+
+		}
+		else if () {
+
+		}
+		else {
+
+		}
+	}*/
 
 	vector<TreeEdge> shortestSidesOfImage(Mat &inputImage) {
 		int yPixels = inputImage.rows;
@@ -308,7 +359,7 @@ public:
 		return localCostsRootToLeaf;
 	}
 
-	void aggregateStepTwo(vector<nodeStructure> &nodeMST, int parentIndex, vector<vector<double>> localCostsStepOne, vector<vector<double>> &localCostsLeafToRoot, double parentFactor, double nodeFactor) {
+	void aggregateStepTwo(vector<nodeStructure> &nodeMST, int parentIndex, vector<vector<double>> &localCostsStepOne, vector<vector<double>> &localCostsLeafToRoot, double parentFactor, double nodeFactor) {
 		// add value from step 1
 		localCostsLeafToRoot[nodeMST[parentIndex].yCoord][nodeMST[parentIndex].xCoord] += (nodeFactor*localCostsStepOne[nodeMST[parentIndex].yCoord][nodeMST[parentIndex].xCoord]);
 		// add value from parent
@@ -320,6 +371,113 @@ public:
 			aggregateStepTwo(nodeMST, nodeMST[parentIndex].children[i], localCostsStepOne, localCostsLeafToRoot, parentFactor, nodeFactor);
 		}
 	}
+
+	// non local
+	vector<vector<double>> imageNonLocalFilter(int inputRows, int inputCols, vector<nodeStructure> &nodeMST, int squareDimension, Mat &inputImage) {
+		
+		vector<double> temp(inputCols,0);
+		vector<vector<double>> nonLocalFilter(inputRows,temp);
+		int xmax = inputCols - 1;
+		int ymax = inputRows - 1;
+
+
+		// create an entry for every pixel
+		for (int j = 0; j < ymax+1; j++) {
+			for (int i = 0; i < xmax+1; i++) {
+				nonLocalFilter[j][i] = nonLocalAtPixel(ymax, xmax,j,i,nodeMST, squareDimension,inputImage);
+				
+				// temp
+				if (j*(xmax+1)+i%10000) {
+					cout << j*(xmax + 1) + i << endl;
+				}
+				// temp
+			}
+		}
+
+		return nonLocalFilter;
+	}
+
+	// non local value at each pixel
+	double nonLocalAtPixel(int ymax, int xmax, int y, int x , vector<nodeStructure> &nodeMST, int squareDimension, Mat &inputImage) {
+		
+		vector<double> nodeWeights;
+		vector<double> nodeIntensities;
+
+		int numberEitherside = (squareDimension - 1) / 2;
+
+		for (int j = y - numberEitherside; j < y + numberEitherside + 1; j++) {
+			for (int i = x - numberEitherside; i < x + numberEitherside + 1; i++) {
+				// out of range or the centre pixel
+				if (j<0 || i<0 || j>ymax || i>xmax || (j == y && i == x)) {
+					continue;
+				}
+				else {
+					int centreNodeIndex = y*(xmax+1) + x;
+					int thisNodeIndex = j*(xmax+1) + i;
+
+					// add to intensity list
+					Scalar pixelIntensityScalar = inputImage.at<uchar>(j, i);
+					nodeIntensities.push_back(*pixelIntensityScalar.val);
+					// find weight from p to q
+					vector<int> nodesChecked;
+					nodeWeights.push_back(findWeight(thisNodeIndex, centreNodeIndex, nodeMST, nodesChecked));
+				}
+			}
+		}
+
+		// find min b
+		int minb = -1;
+		int bCost = -1;
+
+		// iteratate all b values 
+		for (int b = 0; b < 256;b++) {
+			double thisbCost = nonLocalWithb(b,nodeIntensities,nodeWeights);
+
+			if (bCost<0 || thisbCost<bCost) {
+				bCost = thisbCost;
+				minb = b;
+			}
+		}
+
+		return minb;
+	}
+
+	double findWeight(int targetNode, int startingNode, vector<nodeStructure> &nodeMST,vector<int> &nodesChecked) {
+		
+		nodesChecked.push_back(startingNode);
+
+		if (startingNode==targetNode) {
+			return 0;
+		}
+		
+		
+		for (int i = 0; i < nodeMST[startingNode].connectedNodes.size();i++) {
+
+			if (find(nodesChecked.begin(), nodesChecked.end(), nodeMST[startingNode].connectedNodes[i]) != nodesChecked.end()) {
+				continue;
+			}
+
+			double weightToTarget = findWeight(targetNode, nodeMST[startingNode].connectedNodes[i],nodeMST,nodesChecked);
+
+			if (weightToTarget>=0) {
+				return weightToTarget + nodeMST[startingNode].weightsOfConnectedNodes[i];
+			}
+		}
+
+		return -1;
+	}
+
+	double nonLocalWithb(int b, vector<double> &nodeIntensities,vector<double> &nodeWeights) {
+		double cost=0;
+
+		for (int i = 0; i < nodeIntensities.size();i++) {
+			cost += nodeWeights[i]*abs(b-nodeIntensities[i]);
+		}
+
+		return cost;
+	}
+
+
 
 	vector<vector<vector<double>>> abMappingCostants(Mat &inputImage, int squareDimension) {
 		
@@ -375,7 +533,10 @@ public:
 
 		//????????????????????????????????????????
 		double a = 1;
-		double b = 1;
+		double b = 0;
+		//?????????????????????????????????????????
+		abConstants.push_back(a);
+		abConstants.push_back(b);
 
 		return abConstants;
 	}
